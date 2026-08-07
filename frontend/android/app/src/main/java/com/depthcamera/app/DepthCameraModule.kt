@@ -59,6 +59,34 @@ class DepthCameraModule(
   }
 
   @ReactMethod
+  fun saveCollectionJson(collectionName: String?, json: String, promise: Promise) {
+    Thread {
+      try {
+        val safeCollection = safeName(collectionName ?: "collection")
+        val jsonFile = savePublicBytes(
+          safeCollection,
+          "$safeCollection.json",
+          "application/json",
+          json.toByteArray(Charsets.UTF_8)
+        )
+
+        promise.resolve(WritableNativeMap().apply {
+          putBoolean("success", true)
+          putString("uri", jsonFile.uri)
+          putString("path", jsonFile.displayPath)
+          putString("saveFolder", "Documents/depth_camera_images/$safeCollection")
+        })
+      } catch (error: Throwable) {
+        promise.reject(
+          "DEPTH_CAMERA_JSON_SAVE_FAILED",
+          error.message ?: "Unable to save metadata JSON in Documents/depth_camera_images.",
+          error
+        )
+      }
+    }.start()
+  }
+
+  @ReactMethod
   fun startPreview(collectionName: String?, promise: Promise) {
     if (previewRunning) {
       promise.resolve(true)
