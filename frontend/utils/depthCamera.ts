@@ -1,4 +1,4 @@
-import { NativeModules, PermissionsAndroid, Platform } from "react-native";
+import { DeviceEventEmitter, NativeModules, PermissionsAndroid, Platform } from "react-native";
 
 export type DepthCameraCapture = {
   success: boolean;
@@ -12,22 +12,27 @@ export type DepthCameraCapture = {
 type DepthCameraNativeModule = {
   capture: (collectionName?: string) => Promise<DepthCameraCapture>;
   preview?: (collectionName?: string) => Promise<DepthCameraCapture>;
+  startPreview?: (collectionName?: string) => Promise<boolean>;
+  stopPreview?: () => Promise<boolean>;
 };
 
 const nativeDepthCamera = NativeModules.DepthCamera as DepthCameraNativeModule | undefined;
 
 export const hasNativeDepthCamera = () => Platform.OS === "android" && Boolean(nativeDepthCamera?.capture);
 
+async function requestCameraPermission(message = "Camera permission is required for Intel RealSense capture.") {
+  const permission = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
+  if (permission !== PermissionsAndroid.RESULTS.GRANTED) {
+    throw new Error(message);
+  }
+}
+
 export async function captureNativeDepthCamera(collectionName?: string) {
   if (!nativeDepthCamera?.capture) {
     throw new Error("Native RealSense depth camera module is not available in this APK.");
   }
 
-  const permission = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
-  if (permission !== PermissionsAndroid.RESULTS.GRANTED) {
-    throw new Error("Camera permission is required for Intel RealSense capture.");
-  }
-
+  await requestCameraPermission();
   return nativeDepthCamera.capture(collectionName);
 }
 
@@ -36,10 +41,44 @@ export async function previewNativeDepthCamera(collectionName?: string) {
     throw new Error("Native RealSense depth camera preview is not available in this APK.");
   }
 
-  const permission = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
-  if (permission !== PermissionsAndroid.RESULTS.GRANTED) {
-    throw new Error("Camera permission is required for Intel RealSense preview.");
+  await requestCameraPermission("Camera permission is required for Intel RealSense preview.");
+  return nativeDepthCamera.preview(collectionName);
+}
+
+export async function startNativeDepthCameraPreview(collectionName?: string) {
+  if (!nativeDepthCamera?.startPreview) {
+    throw new Error("Native RealSense depth camera live view is not available in this APK.");
   }
 
-  return nativeDepthCamera.preview(collectionName);
+  await requestCameraPermission("Camera permission is required for Intel RealSense live view.");
+  return nativeDepthCamera.startPreview(collectionName);
+}
+
+export async function stopNativeDepthCameraPreview() {
+  if (nativeDepthCamera?.stopPreview) {
+    await nativeDepthCamera.stopPreview();
+  }
+}
+
+export function subscribeNativeDepthCameraPreview(
+  onFrame: (uri: string) => void,
+  onError: (message: string) => void
+) {
+  const frameSubscription = DeviceEventEmitter.addListener(
+    "DepthCameraPreviewFrame",
+    (event: { imageUrl?: string }) => {
+      if (event.imageUrl) onFrame(event.imageUrl);
+    }
+  );
+  const errorSubscription = DeviceEventEmitter.addListener(
+    "DepthCameraPreviewError",
+    (event: { error?: string }) => {
+      onError(event.error || "Live camera preview stopped.");
+    }
+  );
+
+  return () => {
+    frameSubscription.remove();
+    errorSubscription.remove();
+  };
 }

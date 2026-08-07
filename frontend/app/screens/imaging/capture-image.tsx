@@ -5,7 +5,9 @@ import { createNewCollection, ImageItem, useCollection } from "@/context/Collect
 import {
   captureNativeDepthCamera,
   hasNativeDepthCamera,
-  previewNativeDepthCamera,
+  startNativeDepthCameraPreview,
+  stopNativeDepthCameraPreview,
+  subscribeNativeDepthCameraPreview,
 } from "@/utils/depthCamera";
 import { saveCollectionJson } from "@/utils/localCollectionStore";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
@@ -31,7 +33,7 @@ export default function CaptureImageScreen() {
   const { collectionData, setCollectionData } = useCollection();
   const [capturing, setCapturing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const [livePreviewUri, setLivePreviewUri] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [featuredImageUri, setFeaturedImageUri] = useState<string | null>(null);
@@ -41,41 +43,49 @@ export default function CaptureImageScreen() {
   const capturedImages = collectionData?.images ?? [];
 
   useEffect(() => {
-    if (!collectionData || !hasNativeDepthCamera() || capturing) {
+    if (!collectionData || !hasNativeDepthCamera()) {
       return;
     }
 
     let active = true;
-    let busy = false;
-
-    const refreshPreview = async () => {
-      if (busy) return;
-      busy = true;
-      setPreviewing(true);
-      try {
-        const result = await previewNativeDepthCamera(collectionData.name);
-        if (active && result.success) {
-          setLivePreviewUri(result.imageUrl);
+    const unsubscribe = subscribeNativeDepthCameraPreview(
+      (uri) => {
+        if (active) {
+          setLivePreviewUri(uri);
           setPreviewError(null);
+          setStreaming(true);
+        }
+      },
+      (message) => {
+        if (active) {
+          setPreviewError(message);
+          setStreaming(false);
+        }
+      }
+    );
+
+    const startStream = async () => {
+      try {
+        await startNativeDepthCameraPreview(collectionData.name);
+        if (active) {
+          setStreaming(true);
         }
       } catch (err: any) {
         if (active) {
           setPreviewError(err.message || "Live camera preview is unavailable.");
+          setStreaming(false);
         }
-      } finally {
-        busy = false;
-        if (active) setPreviewing(false);
       }
     };
 
-    refreshPreview();
-    const interval = setInterval(refreshPreview, 2500);
+    startStream();
 
     return () => {
       active = false;
-      clearInterval(interval);
+      unsubscribe();
+      stopNativeDepthCameraPreview().catch(() => {});
     };
-  }, [collectionData?.name, capturing]);
+  }, [collectionData?.name]);
 
   useEffect(() => {
     return () => {
@@ -100,6 +110,10 @@ export default function CaptureImageScreen() {
   const handleCapture = async () => {
     try {
       setCapturing(true);
+      if (hasNativeDepthCamera()) {
+        await stopNativeDepthCameraPreview();
+        setStreaming(false);
+      }
       const result = hasNativeDepthCamera()
         ? await captureNativeDepthCamera(collectionData.name)
         : await captureViaBackend(collectionData.name);
@@ -127,6 +141,12 @@ export default function CaptureImageScreen() {
       Alert.alert("Depth Camera", err.message || "Unable to capture image.");
     } finally {
       setCapturing(false);
+      if (hasNativeDepthCamera()) {
+        startNativeDepthCameraPreview(collectionData.name).catch((err: any) => {
+          setPreviewError(err.message || "Live camera preview is unavailable.");
+          setStreaming(false);
+        });
+      }
     }
   };
 
@@ -162,7 +182,7 @@ export default function CaptureImageScreen() {
           },
           images: capturedImages,
         });
-        Alert.alert("Saved", `Collection saved locally: ${saved.id}`);
+        Alert.alert("Saved", buildSaveMessage(saved.path, capturedImages));
         setCollectionData(createNewCollection());
         return;
       }
@@ -190,7 +210,7 @@ export default function CaptureImageScreen() {
         throw new Error(result.error || "Unable to save collection.");
       }
 
-      Alert.alert("Saved", `Collection saved locally with ID: ${result.collectionId}`);
+      Alert.alert("Saved", `Batch saved locally with ID: ${result.collectionId}`);
       setCollectionData(createNewCollection());
     } catch (err: any) {
       Alert.alert("Save Failed", err.message || "Server or network error.");
@@ -215,7 +235,7 @@ export default function CaptureImageScreen() {
             <Image source={{ uri: livePreviewUri }} style={styles.previewImage} resizeMode="cover" />
           ) : (
             <View style={styles.previewPlaceholder}>
-              {previewing ? (
+              {streaming ? (
                 <ActivityIndicator color="#fff" />
               ) : (
                 <MaterialIcons name="linked-camera" size={52} color="#fff" />
@@ -227,7 +247,7 @@ export default function CaptureImageScreen() {
           )}
           <View style={styles.previewBadge}>
             <ThemedText style={styles.previewBadgeText}>
-              {featuredImageUri ? "Captured" : previewing ? "Updating" : "Live View"}
+              {featuredImageUri ? "Captured" : streaming ? "Live View" : "Starting Live View"}
             </ThemedText>
           </View>
         </View>
@@ -601,4 +621,16 @@ async function captureViaBackend(collectionName: string) {
   }
 
   return result;
+}
+
+function buildSaveMessage(jsonPath: string, images: ImageItem[]) {
+  const firstImagePath = images.find((item) => typeof item.metadata?.colorPath === "string")?.metadata
+    ?.colorPath as string | undefined;
+  const imageFolder = firstImagePath ? firstImagePath.replace(/[\\/][^\\/]+$/, "") : "Saved with batch JSON";
+
+  return [
+    "Batch saved locally.",
+    `Batch JSON: ${jsonPath}`,
+    `Images: ${imageFolder}`,
+  ].join("\n");
 }

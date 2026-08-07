@@ -6,8 +6,8 @@ import { ActivityIndicator, ScrollView, useColorScheme, View, StyleSheet, Toucha
 import { Ionicons } from "@expo/vector-icons";
 import { createNewCollection, useCollection } from "@/context/CollectionContext";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { getBotanicalNamesFromFile } from "@/data/botanicalName";
 import { getLightingFromFile } from "@/data/lighting";
+import { getPlantNames, savePlantName, PlantNameOption } from "@/utils/plantNameStore";
 
 export default function ParametersScreen() {
   const colorScheme = useColorScheme();
@@ -15,16 +15,14 @@ export default function ParametersScreen() {
   const router = useRouter();
   const { collectionData, setCollectionData } = useCollection();
 
-  const weedBackgroundOptions = ["Wheat"];
-  const growthStageOptions = ["Yes", "No"];
+  const weedBackgroundOptions = ["Soil", "Crop", "Weeds"];
+  const growthStageOptions = ["Vegetative", "Flowering", "Matured"];
   const soilColorOptions = ["Black", "Brown", "Grey", "Pale Bleached", "Red", "Yellow Brown"];
   const [weedBackground, setWeedBackground] = useState<string | null>(null);
   const [growthStage, setGrowthStage] = useState<string | null>(null);
   const [soilColor, setSoilColor] = useState<string | null>(null);
   const [botanicalName, setBotanicalName] = useState("");
-  const [botanicalOptions, setBotanicalOptions] = useState<
-    { id: number; name: string }[]
-  >([]);
+  const [botanicalOptions, setBotanicalOptions] = useState<PlantNameOption[]>([]);
   const [lighting, setLighting] = useState<{ id: number; name: string }[]>([]);
   const [selectedLightingId, setSelectedLighting] = useState<number | null>(
     collectionData?.lightingId ?? null
@@ -35,11 +33,11 @@ export default function ParametersScreen() {
   useEffect(() => {
     async function load() {
       try {
-        const [botanicalData, lightingData] = await Promise.all([
-          getBotanicalNamesFromFile(),
+        const [plantNameData, lightingData] = await Promise.all([
+          getPlantNames(),
           getLightingFromFile(),
         ]);
-        setBotanicalOptions(botanicalData);
+        setBotanicalOptions(plantNameData);
         setLighting(lightingData);
       } catch (err) {
         console.error("Error loading parameter options:", err);
@@ -70,26 +68,9 @@ export default function ParametersScreen() {
     setShowDropdown(false);
   };
 
-  // =========================
-  // SAVE NEW BOTANICAL NAME
-  // =========================
   const ensureBotanicalExists = async (name: string) => {
-    const exists = botanicalOptions.some(
-      (item) => item.name.toLowerCase() === name.toLowerCase()
-    );
-
-    if (!exists) {
-      const newItem = {
-        id: Date.now(),
-        name,
-      };
-
-      const updated = [...botanicalOptions, newItem];
-      setBotanicalOptions(updated);
-
-      // TODO: persist to file
-      // await saveBotanicalNamesToFile(updated);
-    }
+    const updated = await savePlantName(name, botanicalOptions);
+    setBotanicalOptions(updated);
   };
 
   // =========================
@@ -174,8 +155,10 @@ export default function ParametersScreen() {
               setShowDropdown(true);
             }}
             placeholder="What are you imaging?"
+            placeholderTextColor="#6B7280"
             style={styles.input}
             onFocus={() => setShowDropdown(true)}
+            onEndEditing={() => ensureBotanicalExists(botanicalName)}
           />
 
           {showDropdown && filteredOptions.length > 0 && (
@@ -191,9 +174,8 @@ export default function ParametersScreen() {
               ))}
             </View>
           )}
-          {/* ================= Background of target weed ================= */}
           <View style={styles.container}>
-            <ThemedText style={[styles.label, { marginTop: 20 }]}>Background of target weed</ThemedText>
+            <ThemedText style={[styles.label, { marginTop: 20 }]}>Background of targeted plant</ThemedText>
             {renderList(weedBackgroundOptions, weedBackground, setWeedBackground)}
 
             {/* ================= Growth Stage ================= */}
@@ -289,8 +271,10 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
   },
   input: {
+    backgroundColor: "#fff",
     borderWidth: 1,
     borderColor: "#ccc",
+    color: "#111827",
     borderRadius: 8,
     padding: 12,
     marginTop: 8,
