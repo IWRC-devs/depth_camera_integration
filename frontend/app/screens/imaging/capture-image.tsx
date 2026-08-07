@@ -2,14 +2,20 @@ import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { API_BASE_URL } from "@/constants/Config";
 import { createNewCollection, ImageItem, useCollection } from "@/context/CollectionContext";
-import { captureNativeDepthCamera, hasNativeDepthCamera } from "@/utils/depthCamera";
+import {
+  captureNativeDepthCamera,
+  hasNativeDepthCamera,
+  previewNativeDepthCamera,
+} from "@/utils/depthCamera";
 import { saveCollectionJson } from "@/utils/localCollectionStore";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
+  Pressable,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -25,9 +31,71 @@ export default function CaptureImageScreen() {
   const { collectionData, setCollectionData } = useCollection();
   const [capturing, setCapturing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [livePreviewUri, setLivePreviewUri] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [featuredImageUri, setFeaturedImageUri] = useState<string | null>(null);
+  const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const featuredTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const capturedImages = collectionData?.images ?? [];
 
+  useEffect(() => {
+    if (!collectionData || !hasNativeDepthCamera() || capturing) {
+      return;
+    }
+
+    let active = true;
+    let busy = false;
+
+    const refreshPreview = async () => {
+      if (busy) return;
+      busy = true;
+      setPreviewing(true);
+      try {
+        const result = await previewNativeDepthCamera(collectionData.name);
+        if (active && result.success) {
+          setLivePreviewUri(result.imageUrl);
+          setPreviewError(null);
+        }
+      } catch (err: any) {
+        if (active) {
+          setPreviewError(err.message || "Live camera preview is unavailable.");
+        }
+      } finally {
+        busy = false;
+        if (active) setPreviewing(false);
+      }
+    };
+
+    refreshPreview();
+    const interval = setInterval(refreshPreview, 2500);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [collectionData?.name, capturing]);
+
+  useEffect(() => {
+    return () => {
+      if (featuredTimer.current) {
+        clearTimeout(featuredTimer.current);
+      }
+    };
+  }, []);
+
   if (!collectionData) return <ThemedText>No metadata available. Please go back.</ThemedText>;
+
+  const showFeaturedCapture = (uri: string) => {
+    setFeaturedImageUri(uri);
+    if (featuredTimer.current) {
+      clearTimeout(featuredTimer.current);
+    }
+    featuredTimer.current = setTimeout(() => {
+      setFeaturedImageUri(null);
+    }, 2000);
+  };
 
   const handleCapture = async () => {
     try {
@@ -54,6 +122,7 @@ export default function CaptureImageScreen() {
         ...collectionData,
         images: [...capturedImages, newImage].slice(0, 500),
       });
+      showFeaturedCapture(result.imageUrl);
     } catch (err: any) {
       Alert.alert("Depth Camera", err.message || "Unable to capture image.");
     } finally {
@@ -138,59 +207,165 @@ export default function CaptureImageScreen() {
         </ThemedText>
       </ThemedView>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }}>
+      <View style={styles.container}>
+        <View style={styles.previewPanel}>
+          {featuredImageUri ? (
+            <Image source={{ uri: featuredImageUri }} style={styles.previewImage} resizeMode="cover" />
+          ) : livePreviewUri ? (
+            <Image source={{ uri: livePreviewUri }} style={styles.previewImage} resizeMode="cover" />
+          ) : (
+            <View style={styles.previewPlaceholder}>
+              {previewing ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <MaterialIcons name="linked-camera" size={52} color="#fff" />
+              )}
+              <ThemedText style={styles.previewPlaceholderText}>
+                {previewError || "Live camera view"}
+              </ThemedText>
+            </View>
+          )}
+          <View style={styles.previewBadge}>
+            <ThemedText style={styles.previewBadgeText}>
+              {featuredImageUri ? "Captured" : previewing ? "Updating" : "Live View"}
+            </ThemedText>
+          </View>
+        </View>
+
         <TouchableOpacity
-          style={[styles.cameraButton, capturing && styles.disabledButton]}
+          style={[styles.captureButton, capturing && styles.disabledButton]}
           onPress={handleCapture}
           disabled={capturing}
         >
           {capturing ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <MaterialIcons name="linked-camera" size={56} color="#fff" />
+            <Ionicons name="camera" size={28} color="#fff" />
           )}
-          <ThemedText style={styles.cameraButtonText}>
-            {capturing ? "Capturing..." : "Take Depth Camera Photo"}
+          <ThemedText style={styles.captureButtonText}>
+            {capturing ? "Capturing..." : "Capture Image"}
           </ThemedText>
         </TouchableOpacity>
 
-        {capturedImages.length > 0 && (
-          <>
-            <ThemedText style={styles.heading}>Photos ({capturedImages.length})</ThemedText>
-            <View style={styles.grid}>
-              {capturedImages.map((item) => (
-                <View key={item.id} style={styles.imageWrapper}>
+        <View style={styles.actionsRow}>
+          <TouchableOpacity
+            style={[styles.secondaryButton, capturedImages.length === 0 && styles.disabledButton]}
+            onPress={() => setReviewOpen(true)}
+            disabled={capturedImages.length === 0}
+          >
+            <ThemedText style={styles.secondaryButtonText}>Preview All Images</ThemedText>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.saveButton, (saving || capturedImages.length === 0) && styles.disabledButton]}
+            onPress={handleSaveCollection}
+            disabled={saving || capturedImages.length === 0}
+          >
+            <ThemedText style={styles.saveButtonText}>{saving ? "Saving..." : "Save"}</ThemedText>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.thumbnailSection}>
+          <View style={styles.thumbnailHeader}>
+            <ThemedText style={styles.heading}>Images ({capturedImages.length})</ThemedText>
+            {capturedImages.length > 0 && (
+              <TouchableOpacity onPress={clearAll}>
+                <ThemedText style={styles.clearButtonText}>Clear All</ThemedText>
+              </TouchableOpacity>
+            )}
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.thumbnailStrip}
+          >
+            {capturedImages.length === 0 ? (
+              <ThemedText style={styles.emptyText}>Captured images will appear here.</ThemedText>
+            ) : (
+              capturedImages.map((item, index) => (
+                <TouchableOpacity
+                  key={item.id}
+                  style={styles.imageWrapper}
+                  onPress={() => setSelectedImageUri(item.uri)}
+                >
                   <Image source={{ uri: item.uri }} style={styles.thumbnail} />
-                  <TouchableOpacity style={styles.removeButton} onPress={() => removeImage(item.id)}>
-                    <Ionicons name="close-circle" size={24} color="red" />
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </View>
+                  <View style={styles.indexBadge}>
+                    <ThemedText style={styles.indexBadgeText}>{index + 1}</ThemedText>
+                  </View>
+                  <Pressable style={styles.removeButton} onPress={() => removeImage(item.id)}>
+                    <Ionicons name="close-circle" size={24} color="#E53935" />
+                  </Pressable>
+                </TouchableOpacity>
+              ))
+            )}
+          </ScrollView>
+        </View>
+      </View>
 
-            <TouchableOpacity
-              style={[styles.continueButton, saving && styles.disabledButton]}
-              onPress={handleSaveCollection}
-              disabled={saving}
-            >
-              <ThemedText style={styles.continueButtonText}>
-                {saving ? "Saving..." : "Save Collection"}
-              </ThemedText>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.clearButton} onPress={clearAll}>
-              <ThemedText style={styles.clearButtonText}>Clear All</ThemedText>
-            </TouchableOpacity>
-          </>
-        )}
-      </ScrollView>
+      <ImageModal uri={selectedImageUri} onClose={() => setSelectedImageUri(null)} />
+      <ReviewModal
+        images={capturedImages}
+        visible={reviewOpen}
+        onClose={() => setReviewOpen(false)}
+        onSelect={(uri) => setSelectedImageUri(uri)}
+      />
     </SafeAreaView>
+  );
+}
+
+function ImageModal({ uri, onClose }: { uri: string | null; onClose: () => void }) {
+  return (
+    <Modal visible={Boolean(uri)} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.modalBackdrop}>
+        <Pressable style={styles.modalClose} onPress={onClose}>
+          <Ionicons name="close" size={28} color="#fff" />
+        </Pressable>
+        {uri && <Image source={{ uri }} style={styles.modalImage} resizeMode="contain" />}
+      </View>
+    </Modal>
+  );
+}
+
+function ReviewModal({
+  images,
+  visible,
+  onClose,
+  onSelect,
+}: {
+  images: ImageItem[];
+  visible: boolean;
+  onClose: () => void;
+  onSelect: (uri: string) => void;
+}) {
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.reviewContainer}>
+        <View style={styles.reviewHeader}>
+          <ThemedText style={styles.reviewTitle}>Preview All Images</ThemedText>
+          <TouchableOpacity onPress={onClose}>
+            <Ionicons name="close" size={28} color="#111" />
+          </TouchableOpacity>
+        </View>
+        <ScrollView contentContainerStyle={styles.reviewGrid}>
+          {images.map((item, index) => (
+            <TouchableOpacity
+              key={item.id}
+              style={styles.reviewItem}
+              onPress={() => onSelect(item.uri)}
+            >
+              <Image source={{ uri: item.uri }} style={styles.reviewImage} />
+              <ThemedText style={styles.reviewLabel}>Image {index + 1}</ThemedText>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   titleContainer: {
-    padding: 16,
+    padding: 14,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -198,84 +373,218 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "600",
   },
-  cameraButton: {
-    minHeight: 150,
+  container: {
+    flex: 1,
+    padding: 14,
+    gap: 12,
+  },
+  previewPanel: {
+    flex: 1,
+    minHeight: 300,
+    borderRadius: 8,
+    overflow: "hidden",
+    backgroundColor: "#1F2933",
+  },
+  previewImage: {
+    width: "100%",
+    height: "100%",
+  },
+  previewPlaceholder: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+  },
+  previewPlaceholderText: {
+    marginTop: 12,
+    color: "#fff",
+    fontSize: 16,
+    textAlign: "center",
+  },
+  previewBadge: {
+    position: "absolute",
+    top: 12,
+    left: 12,
+    backgroundColor: "rgba(0,0,0,0.58)",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  previewBadgeText: {
+    color: "#fff",
+    fontWeight: "700",
+  },
+  captureButton: {
+    minHeight: 58,
     borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
-    alignSelf: "stretch",
-    marginBottom: 20,
-    borderWidth: 2,
-    borderColor: "grey",
-    borderStyle: "dashed",
+    flexDirection: "row",
+    gap: 10,
     backgroundColor: "#1F6F8B",
-    padding: 16,
+    paddingHorizontal: 16,
   },
   disabledButton: {
-    opacity: 0.7,
+    opacity: 0.55,
   },
-  cameraButtonText: {
+  captureButtonText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  actionsRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  secondaryButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "#1F6F8B",
+    borderRadius: 8,
+    minHeight: 50,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  secondaryButtonText: {
+    color: "#1F6F8B",
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  saveButton: {
+    minWidth: 104,
+    backgroundColor: "#4CAF50",
+    borderRadius: 8,
+    minHeight: 50,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
+  saveButtonText: {
     color: "#fff",
     fontSize: 16,
     fontWeight: "700",
-    marginTop: 10,
-    textAlign: "center",
+  },
+  thumbnailSection: {
+    minHeight: 122,
+  },
+  thumbnailHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
   },
   heading: {
     fontWeight: "bold",
     fontSize: 16,
-    marginBottom: 12,
   },
-  grid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "flex-start",
+  thumbnailStrip: {
+    minHeight: 92,
+    alignItems: "center",
+    paddingRight: 16,
+  },
+  emptyText: {
+    opacity: 0.65,
   },
   imageWrapper: {
     position: "relative",
-    width: 100,
-    height: 100,
-    margin: 6,
+    width: 88,
+    height: 88,
+    marginRight: 10,
   },
   thumbnail: {
     width: "100%",
     height: "100%",
     borderRadius: 8,
+    backgroundColor: "#E5E7EB",
+  },
+  indexBadge: {
+    position: "absolute",
+    left: 5,
+    bottom: 5,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "rgba(0,0,0,0.68)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  indexBadgeText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
   },
   removeButton: {
     position: "absolute",
-    top: -6,
-    right: -6,
-    backgroundColor: "white",
+    top: -7,
+    right: -7,
+    backgroundColor: "#fff",
     borderRadius: 12,
     width: 24,
     height: 24,
     alignItems: "center",
     justifyContent: "center",
   },
-  continueButton: {
-    marginTop: 12,
-    backgroundColor: "#4CAF50",
-    paddingVertical: 16,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  continueButtonText: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "bold",
-  },
-  clearButton: {
-    borderColor: "red",
-    borderWidth: 1,
-    marginTop: 12,
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: "center",
-  },
   clearButtonText: {
-    color: "red",
-    fontWeight: "bold",
+    color: "#E53935",
+    fontWeight: "700",
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.92)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalClose: {
+    position: "absolute",
+    top: 42,
+    right: 18,
+    zIndex: 2,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.16)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalImage: {
+    width: "96%",
+    height: "86%",
+  },
+  reviewContainer: {
+    flex: 1,
+    backgroundColor: "#F7FAFC",
+  },
+  reviewHeader: {
+    minHeight: 56,
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderBottomWidth: 1,
+    borderBottomColor: "#DDE5ED",
+  },
+  reviewTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+  },
+  reviewGrid: {
+    padding: 12,
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
+  reviewItem: {
+    width: "50%",
+    padding: 6,
+  },
+  reviewImage: {
+    width: "100%",
+    aspectRatio: 1,
+    borderRadius: 8,
+    backgroundColor: "#E5E7EB",
+  },
+  reviewLabel: {
+    marginTop: 6,
+    fontWeight: "600",
   },
 });
 

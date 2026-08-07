@@ -164,8 +164,8 @@ export default function ParametersScreen() {
         <ScrollView
           contentContainerStyle={{ paddingBottom: 60, flexGrow: 1 }}
           showsVerticalScrollIndicator={false}>
-          {/* ================= BOTANICAL NAME ================= */}
-          <ThemedText style={styles.label}>Botanical Name</ThemedText>
+          {/* ================= PLANT NAME ================= */}
+          <ThemedText style={styles.label}>Plant Name</ThemedText>
 
           <TextInput
             value={botanicalName}
@@ -173,7 +173,7 @@ export default function ParametersScreen() {
               setBotanicalName(text);
               setShowDropdown(true);
             }}
-            placeholder="Type or select botanical name"
+            placeholder="What are you imaging?"
             style={styles.input}
             onFocus={() => setShowDropdown(true)}
           />

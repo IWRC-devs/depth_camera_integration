@@ -11,6 +11,7 @@ export type DepthCameraCapture = {
 
 type DepthCameraNativeModule = {
   capture: (collectionName?: string) => Promise<DepthCameraCapture>;
+  preview?: (collectionName?: string) => Promise<DepthCameraCapture>;
 };
 
 const nativeDepthCamera = NativeModules.DepthCamera as DepthCameraNativeModule | undefined;
@@ -28,4 +29,17 @@ export async function captureNativeDepthCamera(collectionName?: string) {
   }
 
   return nativeDepthCamera.capture(collectionName);
+}
+
+export async function previewNativeDepthCamera(collectionName?: string) {
+  if (!nativeDepthCamera?.preview) {
+    throw new Error("Native RealSense depth camera preview is not available in this APK.");
+  }
+
+  const permission = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
+  if (permission !== PermissionsAndroid.RESULTS.GRANTED) {
+    throw new Error("Camera permission is required for Intel RealSense preview.");
+  }
+
+  return nativeDepthCamera.preview(collectionName);
 }

@@ -46,11 +46,18 @@ export const CollectionProvider = ({ children }: { children: ReactNode }) => {
 };
 
 export const createNewCollection = (): CollectionData => {
-  const timestamp = new Date().toISOString();
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const timestamp = [
+    now.getFullYear(),
+    pad(now.getMonth() + 1),
+    pad(now.getDate()),
+  ].join("_") + `_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+
   return {
     synced: null,
     id: null,
-    name: `collection-${timestamp}`,
+    name: timestamp,
     affiliationId: undefined,
     botanicalName: null,
     weedBackground: null,

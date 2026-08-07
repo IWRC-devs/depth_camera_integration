@@ -47,6 +47,23 @@ class DepthCameraModule(
     }.start()
   }
 
+  @ReactMethod
+  fun preview(collectionName: String?, promise: Promise) {
+    Thread {
+      try {
+        ensureInitialized()
+        val result = capturePreviewFrame(collectionName)
+        promise.resolve(result)
+      } catch (error: Throwable) {
+        promise.reject(
+          "DEPTH_CAMERA_PREVIEW_FAILED",
+          error.message ?: "Unable to preview from Intel RealSense camera.",
+          error
+        )
+      }
+    }.start()
+  }
+
   private fun captureFrame(collectionName: String?): WritableNativeMap {
     val safeCollection = safeName(collectionName ?: "collection")
     val timestamp = SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).apply {
@@ -85,6 +102,49 @@ class DepthCameraModule(
                 depthFrame.use { depth ->
                   return saveCapture(outputDir, timestamp, color, depth)
                 }
+              }
+            }
+          } finally {
+            pipeline.stop()
+          }
+        }
+      }
+    }
+  }
+
+  private fun capturePreviewFrame(collectionName: String?): WritableNativeMap {
+    val safeCollection = safeName(collectionName ?: "collection")
+    val timestamp = SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).apply {
+      timeZone = TimeZone.getTimeZone("UTC")
+    }.format(Date())
+    val outputDir = File(reactContext.cacheDir, "depth-camera-preview/$safeCollection").apply {
+      mkdirs()
+    }
+
+    RsContext().use { context ->
+      context.queryDevices().use { devices: DeviceList ->
+        if (devices.deviceCount <= 0) {
+          throw IllegalStateException("No Intel RealSense device was detected. Connect the D435i over USB-C/OTG and accept the Android USB permission dialog.")
+        }
+      }
+    }
+
+    Pipeline().use { pipeline ->
+      Config().use { config ->
+        config.enableStream(StreamType.COLOR, -1, 640, 480, StreamFormat.RGB8, 30)
+
+        pipeline.start(config).use { _: PipelineProfile ->
+          try {
+            repeat(3) {
+              pipeline.waitForFrames(5000).use { _: FrameSet -> }
+            }
+
+            pipeline.waitForFrames(5000).use { frames: FrameSet ->
+              val colorFrame = frames.first(StreamType.COLOR, StreamFormat.RGB8)
+                ?: throw IllegalStateException("RealSense color preview frame was not available.")
+
+              colorFrame.use { color ->
+                return savePreview(outputDir, timestamp, color)
               }
             }
           } finally {
@@ -138,6 +198,32 @@ class DepthCameraModule(
         putString("colorPath", colorFile.absolutePath)
         putString("depthRawPath", depthRawFile.absolutePath)
         putString("depthPreviewPath", depthPreviewFile.absolutePath)
+      })
+    }
+  }
+
+  private fun savePreview(
+    outputDir: File,
+    timestamp: String,
+    colorFrame: Frame
+  ): WritableNativeMap {
+    val color = colorFrame.`as`<VideoFrame>(Extension.VIDEO_FRAME)
+    val colorBytes = ByteArray(colorFrame.dataSize)
+    colorFrame.getData(colorBytes)
+
+    val previewFile = File(outputDir, "preview-$timestamp.jpg")
+    writeRgbJpeg(colorBytes, color.width, color.height, previewFile)
+
+    return WritableNativeMap().apply {
+      putBoolean("success", true)
+      putString("imageUrl", previewFile.toURI().toString())
+      putMap("metadata", WritableNativeMap().apply {
+        putString("source", "android-realsense-preview")
+        putString("capturedAt", isoNow())
+        putString("colorFormat", "RGB8")
+        putInt("colorWidth", color.width)
+        putInt("colorHeight", color.height)
+        putString("colorPath", previewFile.absolutePath)
       })
     }
   }
