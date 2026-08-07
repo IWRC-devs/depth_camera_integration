@@ -1,0 +1,6 @@
+[
+  { "id": 1, "name": "seedling" },
+  { "id": 2, "name": "vegetative" },
+  { "id": 3, "name": "flowering" },
+  { "id": 4, "name": "maturing" }
+]

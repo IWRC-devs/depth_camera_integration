@@ -1,25 +1,19 @@
 {
-  "name": "weed-field-capture-pwa",
+  "name": "depth-camera-app",
+  "version": "1.0.0",
   "private": true,
-  "version": "0.1.0",
-  "type": "module",
   "engines": {
-    "node": ">=20.19"
+    "node": ">=20.19.4"
   },
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "start": "node server.mjs"
-  },
-  "dependencies": {
-    "express": "^5.1.0",
-    "idb": "^8.0.3"
-  },
-  "devDependencies": {
-    "@types/express": "^5.0.3",
-    "@types/node": "^24.1.0",
-    "typescript": "^5.8.3",
-    "vite": "^7.0.6",
-    "vite-plugin-pwa": "^1.0.1"
+    "start": "npm --workspace backend start",
+    "backend": "npm --workspace backend start",
+    "frontend": "npm --workspace frontend start",
+    "frontend:web": "npm --workspace frontend run web",
+    "lint": "npm --workspace frontend run lint"
   }
 }

@@ -1,0 +1,6 @@
+[
+  { "id": 1, "name": "Clear" },
+  { "id": 2, "name": "Partly Cloudy" },
+  { "id": 3, "name": "Cloudy" },
+  { "id": 4, "name": "Overcast" }
+]

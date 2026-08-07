@@ -1,0 +1,17 @@
+node_modules/
+.expo/
+.env
+.env.*
+!.env.example
+backend/uploads/
+backend/data/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+*.pyc
+__pycache__/
+.DS_Store
+.idea/
+.librealsense/
+.previous_image_app/

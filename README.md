@@ -1,58 +1,91 @@
-# Weed Field Capture PWA
+# Depth Camera App
 
-A minimal, Railway-ready, offline-first PWA for collecting weed images and field metadata.
+Depth Camera App is an Expo frontend and Node/Express backend for collecting image batches with field metadata.
 
-## Current prototype capabilities
+## Project Layout
 
-- Installable PWA
-- Offline app shell
-- Tablet/phone camera image input
-- Date, GPS, weed, background, weather, monopod length, and tilt
-- Automatic camera-height calculation:
-  - `height = monopod length × cos(tilt from vertical)`
-- Local IndexedDB storage
-- JSON metadata export
-- RealSense native-bridge readiness check
-- WebUSB diagnostic only
+- `frontend/` - Expo Router mobile/web app.
+- `backend/` - Express API for batch upload, local JSON metadata storage, and Cloudinary image storage.
+- `railway.json` - Railway deploy config for the backend from the repo root.
 
-## Important camera limitation
+## Image And Metadata Flow
 
-A browser PWA is not the planned D435i streaming driver. The D435i should first be tested with the official RealSense Android wrapper. After that succeeds, wrap this PWA with Capacitor and expose RealSense functions through a custom Android plugin.
+1. User enters collection parameters:
+   - botanical name
+   - weed background
+   - growth stage
+   - soil color
+   - lighting
+2. User takes photos with the Intel depth camera.
+3. App uploads immediately when online, or saves the batch locally and syncs later.
+4. Backend stores images in Cloudinary when Cloudinary env vars exist. In local development, it falls back to `backend/uploads/`.
+5. Backend stores collection metadata and image URLs in local JSON files.
 
-See `docs/ANDROID_REALSENSE_TEST.md`.
-
-## Run locally
-
-```bash
-npm install
-npm run dev
-```
-
-## Production build
+## Backend Setup
 
 ```bash
+cd backend
+cp .env.example .env
 npm install
-npm run build
 npm start
 ```
 
-The server reads Railway's `PORT` environment variable.
+Optional metadata storage directory:
 
-## Deploy to Railway
+```bash
+DATA_DIR=
+```
 
-1. Put this project in a GitHub repository.
-2. In Railway, choose **New Project**.
-3. Choose **Deploy from GitHub repo**.
-4. Select the repository.
-5. Railway uses `railway.toml`:
-   - Build: `npm run build`
-   - Start: `npm start`
-6. Generate a Railway domain.
-7. Open the HTTPS domain on the Android device.
-8. In Chrome, choose **Add to Home screen** or **Install app**.
+Optional but recommended for production image storage:
 
-HTTPS is required for service workers, location, and most device APIs.
+```bash
+CLOUDINARY_CLOUD_NAME=
+CLOUDINARY_API_KEY=
+CLOUDINARY_API_SECRET=
+```
 
-## Next milestone
+By default, metadata JSON files are written to `backend/data/collections/`.
 
-Build and install the official RealSense `examples:capture` APK on the exact tablet. Do not start the custom native bridge until RGB and depth streaming pass that hardware test.
+## Intel Depth Camera Capture
+
+The `/api/depth-camera/capture` endpoint runs `backend/scripts/capture_depth_camera.py` on the backend host. That host must have the Intel RealSense SDK/librealsense installed, a supported Intel depth camera connected, and Python packages from `backend/requirements-depth-camera.txt`.
+
+```bash
+cd backend
+pip install -r requirements-depth-camera.txt
+```
+
+If Python is not available as `python`, set:
+
+```bash
+PYTHON_BIN=python3
+```
+
+## Frontend Setup
+
+```bash
+cd frontend
+cp .env.example .env
+npm install
+npm start
+```
+
+Set the backend URL:
+
+```bash
+EXPO_PUBLIC_API_BASE_URL=https://your-railway-backend.up.railway.app
+```
+
+## Railway
+
+This repo can deploy the backend from the root with:
+
+```bash
+npm --workspace backend start
+```
+
+If you prefer Railway's root directory setting, set the service root to `backend/` and use:
+
+```bash
+npm start
+```
