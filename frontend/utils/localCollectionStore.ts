@@ -15,7 +15,7 @@ async function ensureCollectionsDir() {
 
 export async function saveCollectionJson(record: Record<string, unknown>) {
   await ensureCollectionsDir();
-  const id = String(record.id ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const id = String(record.id ?? record.name ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const savedRecord = {
     ...record,
     id,

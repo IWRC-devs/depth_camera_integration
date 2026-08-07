@@ -1,14 +1,9 @@
+import { DepthCameraPreview } from "@/components/DepthCameraPreview";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { API_BASE_URL } from "@/constants/Config";
 import { createNewCollection, ImageItem, useCollection } from "@/context/CollectionContext";
-import {
-  captureNativeDepthCamera,
-  hasNativeDepthCamera,
-  startNativeDepthCameraPreview,
-  stopNativeDepthCameraPreview,
-  subscribeNativeDepthCameraPreview,
-} from "@/utils/depthCamera";
+import { captureNativeDepthCamera, hasNativeDepthCamera } from "@/utils/depthCamera";
 import { saveCollectionJson } from "@/utils/localCollectionStore";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
@@ -33,59 +28,11 @@ export default function CaptureImageScreen() {
   const { collectionData, setCollectionData } = useCollection();
   const [capturing, setCapturing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [streaming, setStreaming] = useState(false);
-  const [livePreviewUri, setLivePreviewUri] = useState<string | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
   const [featuredImageUri, setFeaturedImageUri] = useState<string | null>(null);
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const featuredTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const capturedImages = collectionData?.images ?? [];
-
-  useEffect(() => {
-    if (!collectionData || !hasNativeDepthCamera()) {
-      return;
-    }
-
-    let active = true;
-    const unsubscribe = subscribeNativeDepthCameraPreview(
-      (uri) => {
-        if (active) {
-          setLivePreviewUri(uri);
-          setPreviewError(null);
-          setStreaming(true);
-        }
-      },
-      (message) => {
-        if (active) {
-          setPreviewError(message);
-          setStreaming(false);
-        }
-      }
-    );
-
-    const startStream = async () => {
-      try {
-        await startNativeDepthCameraPreview(collectionData.name);
-        if (active) {
-          setStreaming(true);
-        }
-      } catch (err: any) {
-        if (active) {
-          setPreviewError(err.message || "Live camera preview is unavailable.");
-          setStreaming(false);
-        }
-      }
-    };
-
-    startStream();
-
-    return () => {
-      active = false;
-      unsubscribe();
-      stopNativeDepthCameraPreview().catch(() => {});
-    };
-  }, [collectionData?.name]);
 
   useEffect(() => {
     return () => {
@@ -110,10 +57,6 @@ export default function CaptureImageScreen() {
   const handleCapture = async () => {
     try {
       setCapturing(true);
-      if (hasNativeDepthCamera()) {
-        await stopNativeDepthCameraPreview();
-        setStreaming(false);
-      }
       const result = hasNativeDepthCamera()
         ? await captureNativeDepthCamera(collectionData.name)
         : await captureViaBackend(collectionData.name);
@@ -141,12 +84,6 @@ export default function CaptureImageScreen() {
       Alert.alert("Depth Camera", err.message || "Unable to capture image.");
     } finally {
       setCapturing(false);
-      if (hasNativeDepthCamera()) {
-        startNativeDepthCameraPreview(collectionData.name).catch((err: any) => {
-          setPreviewError(err.message || "Live camera preview is unavailable.");
-          setStreaming(false);
-        });
-      }
     }
   };
 
@@ -231,23 +168,17 @@ export default function CaptureImageScreen() {
         <View style={styles.previewPanel}>
           {featuredImageUri ? (
             <Image source={{ uri: featuredImageUri }} style={styles.previewImage} resizeMode="cover" />
-          ) : livePreviewUri ? (
-            <Image source={{ uri: livePreviewUri }} style={styles.previewImage} resizeMode="cover" />
+          ) : hasNativeDepthCamera() ? (
+            <DepthCameraPreview style={styles.previewImage} />
           ) : (
             <View style={styles.previewPlaceholder}>
-              {streaming ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <MaterialIcons name="linked-camera" size={52} color="#fff" />
-              )}
-              <ThemedText style={styles.previewPlaceholderText}>
-                {previewError || "Live camera view"}
-              </ThemedText>
+              <MaterialIcons name="linked-camera" size={52} color="#fff" />
+              <ThemedText style={styles.previewPlaceholderText}>Live camera view</ThemedText>
             </View>
           )}
           <View style={styles.previewBadge}>
             <ThemedText style={styles.previewBadgeText}>
-              {featuredImageUri ? "Captured" : streaming ? "Live View" : "Starting Live View"}
+              {featuredImageUri ? "Captured" : "RGB Live View"}
             </ThemedText>
           </View>
         </View>
@@ -624,9 +555,10 @@ async function captureViaBackend(collectionName: string) {
 }
 
 function buildSaveMessage(jsonPath: string, images: ImageItem[]) {
-  const firstImagePath = images.find((item) => typeof item.metadata?.colorPath === "string")?.metadata
-    ?.colorPath as string | undefined;
-  const imageFolder = firstImagePath ? firstImagePath.replace(/[\\/][^\\/]+$/, "") : "Saved with batch JSON";
+  const imageFolder =
+    (images.find((item) => typeof item.metadata?.saveFolder === "string")?.metadata?.saveFolder as
+      | string
+      | undefined) ?? "Documents/depth_camera_images";
 
   return [
     "Batch saved locally.",
