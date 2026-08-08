@@ -3,7 +3,7 @@ import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { API_BASE_URL } from "@/constants/Config";
 import { createNewCollection, ImageItem, useCollection } from "@/context/CollectionContext";
-import { captureNativeDepthCamera, hasNativeDepthCamera } from "@/utils/depthCamera";
+import { captureNativeDepthCamera, hasNativeDepthCamera, requestDepthCameraPermission } from "@/utils/depthCamera";
 import { saveCollectionJson } from "@/utils/localCollectionStore";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
@@ -17,17 +17,17 @@ import {
   ScrollView,
   StyleSheet,
   TouchableOpacity,
-  useColorScheme,
   View,
 } from "react-native";
 import uuid from "react-native-uuid";
 
 export default function CaptureImageScreen() {
-  const colorScheme = useColorScheme();
-  const backgroundColor = colorScheme === "dark" ? "#1D3D47" : "#A1CEDC";
   const { collectionData, setCollectionData } = useCollection();
   const [capturing, setCapturing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [previewMode, setPreviewMode] = useState<"rgb" | "depth">("rgb");
+  const [previewReady, setPreviewReady] = useState(!hasNativeDepthCamera());
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [featuredImageUri, setFeaturedImageUri] = useState<string | null>(null);
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -35,7 +35,32 @@ export default function CaptureImageScreen() {
   const capturedImages = collectionData?.images ?? [];
 
   useEffect(() => {
+    let mounted = true;
+
+    async function preparePreview() {
+      if (!hasNativeDepthCamera()) {
+        setPreviewReady(true);
+        return;
+      }
+
+      try {
+        await requestDepthCameraPermission("Camera permission is required to start the live RealSense view.");
+        if (mounted) {
+          setPreviewError(null);
+          setPreviewReady(true);
+        }
+      } catch (err: any) {
+        if (mounted) {
+          setPreviewReady(false);
+          setPreviewError(err.message || "Camera permission was not granted.");
+        }
+      }
+    }
+
+    preparePreview();
+
     return () => {
+      mounted = false;
       if (featuredTimer.current) {
         clearTimeout(featuredTimer.current);
       }
@@ -157,28 +182,58 @@ export default function CaptureImageScreen() {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <ThemedView style={[styles.titleContainer, { backgroundColor }]}>
-        <ThemedText type="title" style={styles.title}>
-          Step 2: Take Photos
-        </ThemedText>
+    <SafeAreaView style={styles.safeArea}>
+      <ThemedView style={styles.titleContainer}>
+        <View>
+          <ThemedText style={styles.eyebrow}>Depth Camera App</ThemedText>
+          <ThemedText type="title" style={styles.title}>Step 2: Take Photos</ThemedText>
+        </View>
+        <View style={styles.batchPill}>
+          <Ionicons name="folder-open" size={15} color="#D9F99D" />
+          <ThemedText style={styles.batchPillText}>{collectionData.name}</ThemedText>
+        </View>
       </ThemedView>
 
       <View style={styles.container}>
         <View style={styles.previewPanel}>
+          <View style={styles.previewTopBar}>
+            <View style={styles.segmentedControl}>
+              <TouchableOpacity
+                style={[styles.segmentButton, previewMode === "rgb" && styles.segmentButtonActive]}
+                onPress={() => setPreviewMode("rgb")}
+              >
+                <Ionicons name="color-filter" size={16} color={previewMode === "rgb" ? "#08111F" : "#D8E2EA"} />
+                <ThemedText style={[styles.segmentText, previewMode === "rgb" && styles.segmentTextActive]}>RGB</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.segmentButton, previewMode === "depth" && styles.segmentButtonActive]}
+                onPress={() => setPreviewMode("depth")}
+              >
+                <MaterialIcons name="layers" size={16} color={previewMode === "depth" ? "#08111F" : "#D8E2EA"} />
+                <ThemedText style={[styles.segmentText, previewMode === "depth" && styles.segmentTextActive]}>Depth</ThemedText>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.liveStatus}>
+              <View style={styles.liveDot} />
+              <ThemedText style={styles.liveStatusText}>{featuredImageUri ? "Captured" : "Live"}</ThemedText>
+            </View>
+          </View>
+
           {featuredImageUri ? (
             <Image source={{ uri: featuredImageUri }} style={styles.previewImage} resizeMode="cover" />
-          ) : hasNativeDepthCamera() ? (
-            <DepthCameraPreview style={styles.previewImage} />
+          ) : hasNativeDepthCamera() && previewReady ? (
+            <DepthCameraPreview mode={previewMode} style={styles.previewImage} />
           ) : (
             <View style={styles.previewPlaceholder}>
               <MaterialIcons name="linked-camera" size={52} color="#fff" />
-              <ThemedText style={styles.previewPlaceholderText}>Live camera view</ThemedText>
+              <ThemedText style={styles.previewPlaceholderText}>
+                {previewError ?? "Preparing live RealSense view"}
+              </ThemedText>
             </View>
           )}
           <View style={styles.previewBadge}>
             <ThemedText style={styles.previewBadgeText}>
-              {featuredImageUri ? "Captured" : "RGB Live View"}
+              {featuredImageUri ? "Captured Preview" : previewMode === "depth" ? "Depth Stream" : "RGB Stream"}
             </ThemedText>
           </View>
         </View>
@@ -191,7 +246,7 @@ export default function CaptureImageScreen() {
           {capturing ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Ionicons name="camera" size={28} color="#fff" />
+            <Ionicons name="radio-button-on" size={28} color="#fff" />
           )}
           <ThemedText style={styles.captureButtonText}>
             {capturing ? "Capturing..." : "Capture Image"}
@@ -218,7 +273,10 @@ export default function CaptureImageScreen() {
 
         <View style={styles.thumbnailSection}>
           <View style={styles.thumbnailHeader}>
-            <ThemedText style={styles.heading}>Images ({capturedImages.length})</ThemedText>
+            <View>
+              <ThemedText style={styles.heading}>Captured Images</ThemedText>
+              <ThemedText style={styles.subheading}>{capturedImages.length} saved in this batch</ThemedText>
+            </View>
             {capturedImages.length > 0 && (
               <TouchableOpacity onPress={clearAll}>
                 <ThemedText style={styles.clearButtonText}>Clear All</ThemedText>
@@ -315,30 +373,138 @@ function ReviewModal({
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#EEF4F0",
+  },
   titleContainer: {
-    padding: 14,
+    minHeight: 88,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: "#102A2D",
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "space-between",
+    flexDirection: "row",
+    borderBottomWidth: 1,
+    borderBottomColor: "#1F4546",
+  },
+  eyebrow: {
+    color: "#A7F3D0",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0,
+    textTransform: "uppercase",
   },
   title: {
-    fontSize: 22,
-    fontWeight: "600",
+    color: "#F8FAFC",
+    fontSize: 23,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  batchPill: {
+    maxWidth: 158,
+    minHeight: 34,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 6,
+    backgroundColor: "rgba(217,249,157,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(217,249,157,0.28)",
+  },
+  batchPillText: {
+    color: "#ECFCCB",
+    fontSize: 12,
+    fontWeight: "800",
   },
   container: {
     flex: 1,
-    padding: 14,
+    padding: 12,
     gap: 12,
+    backgroundColor: "#EEF4F0",
   },
   previewPanel: {
     flex: 1,
-    minHeight: 300,
+    minHeight: 330,
     borderRadius: 8,
     overflow: "hidden",
-    backgroundColor: "#1F2933",
+    backgroundColor: "#08111F",
+    borderWidth: 1,
+    borderColor: "#BFD7CB",
+    elevation: 6,
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.16,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
   },
   previewImage: {
     width: "100%",
     height: "100%",
+  },
+  previewTopBar: {
+    position: "absolute",
+    top: 10,
+    left: 10,
+    right: 10,
+    minHeight: 42,
+    zIndex: 3,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  segmentedControl: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 3,
+    borderRadius: 8,
+    backgroundColor: "rgba(8,17,31,0.78)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.16)",
+  },
+  segmentButton: {
+    minWidth: 82,
+    height: 34,
+    borderRadius: 7,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 6,
+  },
+  segmentButtonActive: {
+    backgroundColor: "#D9F99D",
+  },
+  segmentText: {
+    color: "#D8E2EA",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  segmentTextActive: {
+    color: "#08111F",
+  },
+  liveStatus: {
+    height: 34,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: "rgba(8,17,31,0.72)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#34D399",
+  },
+  liveStatusText: {
+    color: "#F8FAFC",
+    fontSize: 12,
+    fontWeight: "800",
   },
   previewPlaceholder: {
     flex: 1,
@@ -354,26 +520,31 @@ const styles = StyleSheet.create({
   },
   previewBadge: {
     position: "absolute",
-    top: 12,
+    bottom: 12,
     left: 12,
-    backgroundColor: "rgba(0,0,0,0.58)",
+    backgroundColor: "rgba(8,17,31,0.76)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
     borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
   },
   previewBadgeText: {
     color: "#fff",
     fontWeight: "700",
   },
   captureButton: {
-    minHeight: 58,
+    minHeight: 62,
     borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 10,
-    backgroundColor: "#1F6F8B",
+    backgroundColor: "#0E7C66",
     paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: "#0B5F4E",
+    elevation: 3,
   },
   disabledButton: {
     opacity: 0.55,
@@ -390,20 +561,21 @@ const styles = StyleSheet.create({
   secondaryButton: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#1F6F8B",
+    borderColor: "#A9C7BC",
     borderRadius: 8,
     minHeight: 50,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "#FFFFFF",
   },
   secondaryButtonText: {
-    color: "#1F6F8B",
+    color: "#145A4A",
     fontWeight: "700",
     textAlign: "center",
   },
   saveButton: {
     minWidth: 104,
-    backgroundColor: "#4CAF50",
+    backgroundColor: "#1B8A5A",
     borderRadius: 8,
     minHeight: 50,
     alignItems: "center",
@@ -416,7 +588,12 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   thumbnailSection: {
-    minHeight: 122,
+    minHeight: 132,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#D7E5DE",
   },
   thumbnailHeader: {
     flexDirection: "row",
@@ -427,6 +604,12 @@ const styles = StyleSheet.create({
   heading: {
     fontWeight: "bold",
     fontSize: 16,
+    color: "#102A2D",
+  },
+  subheading: {
+    marginTop: 2,
+    color: "#5F746B",
+    fontSize: 12,
   },
   thumbnailStrip: {
     minHeight: 92,

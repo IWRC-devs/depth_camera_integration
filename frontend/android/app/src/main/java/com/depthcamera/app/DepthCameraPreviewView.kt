@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.widget.ImageView
 import com.intel.realsense.librealsense.Config
+import com.intel.realsense.librealsense.DepthFrame
 import com.intel.realsense.librealsense.DeviceList
 import com.intel.realsense.librealsense.Extension
 import com.intel.realsense.librealsense.FrameSet
@@ -25,6 +26,7 @@ class DepthCameraPreviewView(context: Context) : ImageView(context) {
   @Volatile
   private var running = false
   private var attached = false
+  private var previewMode = "rgb"
   private var streamThread: Thread? = null
 
   init {
@@ -53,12 +55,23 @@ class DepthCameraPreviewView(context: Context) : ImageView(context) {
     }, 1200)
   }
 
+  fun setPreviewMode(mode: String) {
+    val normalized = if (mode.lowercase() == "depth") "depth" else "rgb"
+    if (previewMode == normalized) return
+    previewMode = normalized
+    if (attached) {
+      stopStream()
+      startStream()
+    }
+  }
+
   private fun startStream() {
     if (running) return
     running = true
+    val modeAtStart = previewMode
     streamThread = Thread {
       try {
-        streamRgb()
+        streamFrames(modeAtStart)
       } catch (_: Throwable) {
         // Keep preview failures quiet in the view; capture still reports errors through the button.
       } finally {
@@ -84,7 +97,7 @@ class DepthCameraPreviewView(context: Context) : ImageView(context) {
     streamThread = null
   }
 
-  private fun streamRgb() {
+  private fun streamFrames(mode: String) {
     DepthCameraRuntime.ensureInitialized()
     RsContext().use { context ->
       context.queryDevices().use { devices: DeviceList ->
@@ -95,7 +108,11 @@ class DepthCameraPreviewView(context: Context) : ImageView(context) {
     synchronized(DepthCameraRuntime.cameraLock) {
       Pipeline().use { pipeline ->
         Config().use { config ->
-          config.enableStream(StreamType.COLOR, -1, 640, 480, StreamFormat.RGB8, 30)
+          if (mode == "depth") {
+            config.enableStream(StreamType.DEPTH, -1, 640, 480, StreamFormat.Z16, 30)
+          } else {
+            config.enableStream(StreamType.COLOR, -1, 640, 480, StreamFormat.RGB8, 30)
+          }
 
           pipeline.start(config).use { _: PipelineProfile ->
             try {
@@ -106,14 +123,27 @@ class DepthCameraPreviewView(context: Context) : ImageView(context) {
 
               while (running) {
                 pipeline.waitForFrames(1000).use { frames: FrameSet ->
-                  val colorFrame = frames.first(StreamType.COLOR, StreamFormat.RGB8) ?: return@use
-                  colorFrame.use { frame ->
-                    val videoFrame = frame.`as`<VideoFrame>(Extension.VIDEO_FRAME)
-                    val bytes = ByteArray(frame.dataSize)
-                    frame.getData(bytes)
-                    val bitmap = rgbToBitmap(bytes, videoFrame.width, videoFrame.height)
-                    mainHandler.post {
-                      if (attached) setImageBitmap(bitmap) else bitmap.recycle()
+                  if (mode == "depth") {
+                    val depthFrame = frames.first(StreamType.DEPTH, StreamFormat.Z16) ?: return@use
+                    depthFrame.use { frame ->
+                      val depth = frame.`as`<DepthFrame>(Extension.DEPTH_FRAME)
+                      val bytes = ByteArray(frame.dataSize)
+                      frame.getData(bytes)
+                      val bitmap = depthToBitmap(bytes, depth.width, depth.height)
+                      mainHandler.post {
+                        if (attached && previewMode == mode) setImageBitmap(bitmap) else bitmap.recycle()
+                      }
+                    }
+                  } else {
+                    val colorFrame = frames.first(StreamType.COLOR, StreamFormat.RGB8) ?: return@use
+                    colorFrame.use { frame ->
+                      val videoFrame = frame.`as`<VideoFrame>(Extension.VIDEO_FRAME)
+                      val bytes = ByteArray(frame.dataSize)
+                      frame.getData(bytes)
+                      val bitmap = rgbToBitmap(bytes, videoFrame.width, videoFrame.height)
+                      mainHandler.post {
+                        if (attached && previewMode == mode) setImageBitmap(bitmap) else bitmap.recycle()
+                      }
                     }
                   }
                 }
@@ -135,6 +165,27 @@ class DepthCameraPreviewView(context: Context) : ImageView(context) {
       val g = rgb[source++].toInt() and 0xff
       val b = rgb[source++].toInt() and 0xff
       pixels[i] = -0x1000000 or (r shl 16) or (g shl 8) or b
+    }
+    return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+  }
+
+  private fun depthToBitmap(depth: ByteArray, width: Int, height: Int): Bitmap {
+    val pixels = IntArray(width * height)
+    val maxPreviewMm = 3000
+    var source = 0
+    for (i in pixels.indices) {
+      val lo = depth[source++].toInt() and 0xff
+      val hi = depth[source++].toInt() and 0xff
+      val millimeters = (hi shl 8) or lo
+      val value = if (millimeters <= 0) {
+        8
+      } else {
+        255 - ((millimeters.coerceAtMost(maxPreviewMm) * 255) / maxPreviewMm)
+      }
+      val red = (value * 0.78).toInt().coerceIn(0, 255)
+      val green = value.coerceIn(0, 255)
+      val blue = (value * 1.12).toInt().coerceIn(0, 255)
+      pixels[i] = -0x1000000 or (red shl 16) or (green shl 8) or blue
     }
     return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
   }

@@ -4,5 +4,6 @@
   { "id": 3, "name": "pale_bleached" },
   { "id": 4, "name": "yellow_brown" },
   { "id": 5, "name": "brown" },
-  { "id": 6, "name": "grey" }
+  { "id": 6, "name": "grey" },
+  { "id": 7, "name": "soil_not_visible" }
 ]
