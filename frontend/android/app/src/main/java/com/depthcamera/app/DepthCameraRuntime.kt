@@ -36,7 +36,7 @@ object DepthCameraRuntime {
   fun applyColorExposure(device: Device) {
     device.querySensors().forEach { sensor ->
       try {
-        if (!sensor.is(Extension.COLOR_SENSOR)) return@forEach
+        if (!sensor.`is`(Extension.COLOR_SENSOR)) return@forEach
         if (sensor.supports(Option.ENABLE_AUTO_EXPOSURE)) {
           sensor.setValue(Option.ENABLE_AUTO_EXPOSURE, if (autoExposureEnabled) 1f else 0f)
         }
