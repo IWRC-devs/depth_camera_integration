@@ -14,6 +14,10 @@ type DepthCameraNativeModule = {
   preview?: (collectionName?: string) => Promise<DepthCameraCapture>;
   startPreview?: (collectionName?: string) => Promise<boolean>;
   stopPreview?: () => Promise<boolean>;
+  setExposureSettings?: (
+    autoExposure: boolean,
+    exposure: number
+  ) => Promise<{ success: boolean; autoExposure: boolean; exposure: number }>;
 };
 
 const nativeDepthCamera = NativeModules.DepthCamera as DepthCameraNativeModule | undefined;
@@ -62,6 +66,14 @@ export async function stopNativeDepthCameraPreview() {
   if (nativeDepthCamera?.stopPreview) {
     await nativeDepthCamera.stopPreview();
   }
+}
+
+export async function setDepthCameraExposureSettings(autoExposure: boolean, exposure: number) {
+  if (!nativeDepthCamera?.setExposureSettings) {
+    return;
+  }
+
+  await nativeDepthCamera.setExposureSettings(autoExposure, exposure);
 }
 
 export function subscribeNativeDepthCameraPreview(

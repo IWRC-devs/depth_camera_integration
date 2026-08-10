@@ -65,6 +65,13 @@ class DepthCameraPreviewView(context: Context) : ImageView(context) {
     }
   }
 
+  fun refreshExposure() {
+    if (attached && previewMode == "rgb") {
+      stopStream()
+      startStream()
+    }
+  }
+
   private fun startStream() {
     if (running) return
     running = true
@@ -114,7 +121,12 @@ class DepthCameraPreviewView(context: Context) : ImageView(context) {
             config.enableStream(StreamType.COLOR, -1, 640, 480, StreamFormat.RGB8, 30)
           }
 
-          pipeline.start(config).use { _: PipelineProfile ->
+          pipeline.start(config).use { profile: PipelineProfile ->
+            if (mode == "rgb") {
+              profile.getDevice().use { device ->
+                DepthCameraRuntime.applyColorExposure(device)
+              }
+            }
             try {
               repeat(5) {
                 if (!running) return
@@ -198,6 +210,11 @@ class DepthCameraPreviewView(context: Context) : ImageView(context) {
     fun pauseAllForCapture() {
       val snapshot = synchronized(activeViews) { activeViews.toList() }
       snapshot.forEach { it.pauseForCapture() }
+    }
+
+    fun refreshAllExposure() {
+      val snapshot = synchronized(activeViews) { activeViews.toList() }
+      snapshot.forEach { it.refreshExposure() }
     }
   }
 }
