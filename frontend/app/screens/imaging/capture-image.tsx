@@ -7,7 +7,6 @@ import {
   captureNativeDepthCamera,
   hasNativeDepthCamera,
   requestDepthCameraPermission,
-  setDepthCameraExposureSettings,
 } from "@/utils/depthCamera";
 import { saveCollectionJson } from "@/utils/localCollectionStore";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
@@ -15,24 +14,16 @@ import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  GestureResponderEvent,
   Image,
-  LayoutChangeEvent,
   Modal,
   Pressable,
   SafeAreaView,
   ScrollView,
   StyleSheet,
-  Switch,
   TouchableOpacity,
   View,
 } from "react-native";
 import uuid from "react-native-uuid";
-
-const EXPOSURE_MIN = 50;
-const EXPOSURE_MAX = 5000;
-const EXPOSURE_STEP = 50;
-const DEFAULT_EXPOSURE = 550;
 
 export default function CaptureImageScreen() {
   const { collectionData, setCollectionData } = useCollection();
@@ -44,10 +35,7 @@ export default function CaptureImageScreen() {
   const [featuredImageUri, setFeaturedImageUri] = useState<string | null>(null);
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
-  const [autoExposure, setAutoExposure] = useState(true);
-  const [manualExposure, setManualExposure] = useState(DEFAULT_EXPOSURE);
   const featuredTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const exposureUpdateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const capturedImages = collectionData?.images ?? [];
 
   useEffect(() => {
@@ -80,31 +68,8 @@ export default function CaptureImageScreen() {
       if (featuredTimer.current) {
         clearTimeout(featuredTimer.current);
       }
-      if (exposureUpdateTimer.current) {
-        clearTimeout(exposureUpdateTimer.current);
-      }
     };
   }, []);
-
-  useEffect(() => {
-    if (!hasNativeDepthCamera()) return;
-
-    if (exposureUpdateTimer.current) {
-      clearTimeout(exposureUpdateTimer.current);
-    }
-
-    exposureUpdateTimer.current = setTimeout(() => {
-      setDepthCameraExposureSettings(autoExposure, manualExposure).catch((err: any) => {
-        setPreviewError(err.message || "Unable to update camera exposure.");
-      });
-    }, 350);
-
-    return () => {
-      if (exposureUpdateTimer.current) {
-        clearTimeout(exposureUpdateTimer.current);
-      }
-    };
-  }, [autoExposure, manualExposure]);
 
   if (!collectionData) return <ThemedText>No metadata available. Please go back.</ThemedText>;
 
@@ -122,10 +87,6 @@ export default function CaptureImageScreen() {
     try {
       setCapturing(true);
       const nativeCamera = hasNativeDepthCamera();
-      if (nativeCamera) {
-        await setDepthCameraExposureSettings(autoExposure, manualExposure);
-      }
-
       const result = nativeCamera
         ? await captureNativeDepthCamera(collectionData.name)
         : await captureViaBackend(collectionData.name);
@@ -282,43 +243,6 @@ export default function CaptureImageScreen() {
           </View>
         </View>
 
-        <View style={styles.cameraPanel}>
-          <View style={styles.cameraPanelHeader}>
-            <View style={styles.cameraPanelTitleRow}>
-              <MaterialIcons name="tune" size={18} color="#102A2D" />
-              <ThemedText style={styles.cameraPanelTitle}>Camera</ThemedText>
-            </View>
-            <View style={styles.autoExposureRow}>
-              <ThemedText style={styles.autoExposureText}>Auto</ThemedText>
-              <Switch
-                value={autoExposure}
-                onValueChange={setAutoExposure}
-                trackColor={{ false: "#A9C7BC", true: "#A7F3D0" }}
-                thumbColor={autoExposure ? "#0E7C66" : "#F8FAFC"}
-              />
-            </View>
-          </View>
-
-          <View style={[styles.exposureControl, autoExposure && styles.exposureControlDisabled]}>
-            <View style={styles.exposureValueRow}>
-              <ThemedText style={styles.exposureLabel}>Manual exposure</ThemedText>
-              <ThemedText style={styles.exposureValue}>{Math.round(manualExposure)} us</ThemedText>
-            </View>
-            <ExposureSlider
-              disabled={autoExposure}
-              value={manualExposure}
-              onChange={setManualExposure}
-            />
-            <View style={styles.exposureHintRow}>
-              <ThemedText style={styles.exposureHint}>Darker</ThemedText>
-              <ThemedText style={styles.exposureHint}>Brighter</ThemedText>
-            </View>
-            <ThemedText style={styles.exposureHelp}>
-              Turn Auto off and lower exposure if the RGB image is washed out in bright field light.
-            </ThemedText>
-          </View>
-        </View>
-
         <TouchableOpacity
           style={[styles.captureButton, capturing && styles.disabledButton]}
           onPress={handleCapture}
@@ -400,47 +324,6 @@ export default function CaptureImageScreen() {
         onSelect={(uri) => setSelectedImageUri(uri)}
       />
     </SafeAreaView>
-  );
-}
-
-function ExposureSlider({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: number;
-  onChange: (value: number) => void;
-  disabled?: boolean;
-}) {
-  const [width, setWidth] = useState(1);
-  const percent = (value - EXPOSURE_MIN) / (EXPOSURE_MAX - EXPOSURE_MIN);
-  const clampedPercent = Math.max(0, Math.min(1, percent));
-
-  const updateFromEvent = (event: GestureResponderEvent) => {
-    if (disabled) return;
-
-    const x = Math.max(0, Math.min(width, event.nativeEvent.locationX));
-    const raw = EXPOSURE_MIN + (x / width) * (EXPOSURE_MAX - EXPOSURE_MIN);
-    const stepped = Math.round(raw / EXPOSURE_STEP) * EXPOSURE_STEP;
-    onChange(Math.max(EXPOSURE_MIN, Math.min(EXPOSURE_MAX, stepped)));
-  };
-
-  const handleLayout = (event: LayoutChangeEvent) => {
-    setWidth(Math.max(1, event.nativeEvent.layout.width));
-  };
-
-  return (
-    <View
-      style={[styles.sliderTrack, disabled && styles.sliderTrackDisabled]}
-      onLayout={handleLayout}
-      onStartShouldSetResponder={() => !disabled}
-      onMoveShouldSetResponder={() => !disabled}
-      onResponderGrant={updateFromEvent}
-      onResponderMove={updateFromEvent}
-    >
-      <View style={[styles.sliderFill, { width: `${clampedPercent * 100}%` }]} />
-      <View style={[styles.sliderThumb, { left: `${clampedPercent * 100}%` }]} />
-    </View>
   );
 }
 
@@ -654,105 +537,6 @@ const styles = StyleSheet.create({
   previewBadgeText: {
     color: "#fff",
     fontWeight: "700",
-  },
-  cameraPanel: {
-    borderRadius: 8,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#D7E5DE",
-    padding: 12,
-    gap: 10,
-  },
-  cameraPanelHeader: {
-    minHeight: 34,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-  },
-  cameraPanelTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  cameraPanelTitle: {
-    color: "#102A2D",
-    fontSize: 16,
-    fontWeight: "800",
-  },
-  autoExposureRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  autoExposureText: {
-    color: "#145A4A",
-    fontWeight: "800",
-  },
-  exposureControl: {
-    gap: 8,
-  },
-  exposureControlDisabled: {
-    opacity: 0.45,
-  },
-  exposureValueRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-  },
-  exposureLabel: {
-    color: "#334155",
-    fontWeight: "700",
-  },
-  exposureValue: {
-    color: "#0E7C66",
-    fontWeight: "900",
-  },
-  sliderTrack: {
-    height: 28,
-    borderRadius: 8,
-    backgroundColor: "#E3EEE8",
-    borderWidth: 1,
-    borderColor: "#C5D8CF",
-    justifyContent: "center",
-    overflow: "visible",
-  },
-  sliderTrackDisabled: {
-    backgroundColor: "#EEF2F0",
-  },
-  sliderFill: {
-    position: "absolute",
-    left: 0,
-    height: "100%",
-    borderRadius: 8,
-    backgroundColor: "#A7F3D0",
-  },
-  sliderThumb: {
-    position: "absolute",
-    top: 2,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: "#0E7C66",
-    borderWidth: 3,
-    borderColor: "#FFFFFF",
-    transform: [{ translateX: -11 }],
-    elevation: 3,
-  },
-  exposureHintRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  exposureHint: {
-    color: "#64746D",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  exposureHelp: {
-    color: "#5F746B",
-    fontSize: 12,
-    lineHeight: 17,
   },
   captureButton: {
     minHeight: 62,

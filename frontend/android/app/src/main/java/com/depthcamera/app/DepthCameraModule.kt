@@ -87,19 +87,6 @@ class DepthCameraModule(
   }
 
   @ReactMethod
-  fun setExposureSettings(autoExposure: Boolean, exposure: Double, promise: Promise) {
-    Thread {
-      DepthCameraRuntime.updateExposureSettings(autoExposure, exposure.toFloat())
-      DepthCameraPreviewView.refreshAllExposure()
-      promise.resolve(WritableNativeMap().apply {
-        putBoolean("success", true)
-        putBoolean("autoExposure", DepthCameraRuntime.autoExposureEnabled)
-        putDouble("exposure", DepthCameraRuntime.manualExposure.toDouble())
-      })
-    }.start()
-  }
-
-  @ReactMethod
   fun startPreview(collectionName: String?, promise: Promise) {
     if (previewRunning) {
       promise.resolve(true)
@@ -179,8 +166,11 @@ class DepthCameraModule(
               DepthCameraRuntime.applyColorExposure(device)
             }
             try {
-              repeat(8) {
+              repeat(45) {
                 pipeline.waitForFrames(5000).use { _: FrameSet -> }
+              }
+              profile.getDevice().use { device ->
+                DepthCameraRuntime.applyColorExposure(device)
               }
 
               pipeline.waitForFrames(5000).use { frames: FrameSet ->

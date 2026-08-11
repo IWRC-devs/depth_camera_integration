@@ -65,13 +65,6 @@ class DepthCameraPreviewView(context: Context) : ImageView(context) {
     }
   }
 
-  fun refreshExposure() {
-    if (attached && previewMode == "rgb") {
-      stopStream()
-      startStream()
-    }
-  }
-
   private fun startStream() {
     if (running) return
     running = true
@@ -210,11 +203,6 @@ class DepthCameraPreviewView(context: Context) : ImageView(context) {
     fun pauseAllForCapture() {
       val snapshot = synchronized(activeViews) { activeViews.toList() }
       snapshot.forEach { it.pauseForCapture() }
-    }
-
-    fun refreshAllExposure() {
-      val snapshot = synchronized(activeViews) { activeViews.toList() }
-      snapshot.forEach { it.refreshExposure() }
     }
   }
 }
