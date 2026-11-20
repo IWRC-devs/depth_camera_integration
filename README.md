@@ -1,5 +1,7 @@
 # Depth Camera App
 
+Android camera selection and OAK-D W PoE setup: [OAK camera guide](docs/oak-camera.md).
+
 Depth Camera App is an Expo frontend and Node/Express backend for collecting image batches with field metadata.
 
 ## Project Layout

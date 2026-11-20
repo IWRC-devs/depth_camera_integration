@@ -1,4 +1,8 @@
 import { DepthCameraPreview } from "@/components/DepthCameraPreview";
+import { OakCameraPreview } from "@/components/OakCameraPreview";
+import { captureOakCamera, connectOakCamera, OakInfo } from "@/utils/oakCamera";
+import * as FileSystem from "expo-file-system/legacy";
+import { useIsFocused } from "@react-navigation/native";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { API_BASE_URL } from "@/constants/Config";
@@ -10,7 +14,7 @@ import {
 } from "@/utils/depthCamera";
 import { saveCollectionJson } from "@/utils/localCollectionStore";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -21,11 +25,13 @@ import {
   ScrollView,
   StyleSheet,
   TouchableOpacity,
+  TextInput,
   View,
 } from "react-native";
 import uuid from "react-native-uuid";
 
 export default function CaptureImageScreen() {
+  const isFocused = useIsFocused();
   const { collectionData, setCollectionData } = useCollection();
   const [capturing, setCapturing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -35,13 +41,65 @@ export default function CaptureImageScreen() {
   const [featuredImageUri, setFeaturedImageUri] = useState<string | null>(null);
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [cameraType, setCameraType] = useState<"realsense" | "oak-d">("realsense");
+  const [oakAddress, setOakAddress] = useState("http://10.95.76.11:8080");
+  const [oakInfo, setOakInfo] = useState<OakInfo | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [settingsReady, setSettingsReady] = useState(false);
+  const connectionAttempt = useRef(0);
+  const oakPreviewError = useCallback((message: string) => setPreviewError(message), []);
+  const oakPreviewReady = useCallback(() => setPreviewError(null), []);
   const featuredTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const capturedImages = collectionData?.images ?? [];
 
   useEffect(() => {
     let mounted = true;
+    const path = `${FileSystem.documentDirectory}camera-settings.json`;
+    void (async () => {
+      try {
+        if ((await FileSystem.getInfoAsync(path)).exists) {
+          const settings = JSON.parse(await FileSystem.readAsStringAsync(path));
+          if (mounted) {
+            setCameraType(settings.cameraType === "oak-d" ? "oak-d" : "realsense");
+            if (typeof settings.oakAddress === "string") setOakAddress(settings.oakAddress);
+          }
+        }
+      } catch { /* Use defaults if settings cannot be read. */ }
+      finally { if (mounted) setSettingsReady(true); }
+    })();
+    return () => { mounted = false; connectionAttempt.current += 1; };
+  }, []);
+
+  useEffect(() => {
+    if (!settingsReady || !FileSystem.documentDirectory) return;
+    const timer = setTimeout(() => {
+      void FileSystem.writeAsStringAsync(`${FileSystem.documentDirectory}camera-settings.json`, JSON.stringify({ cameraType, oakAddress })).catch(console.warn);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [cameraType, oakAddress, settingsReady]);
+
+  const connectOak = async () => {
+    const attempt = ++connectionAttempt.current;
+    setConnecting(true);
+    setOakInfo(null);
+    setPreviewError(null);
+    try {
+      const info = await connectOakCamera(oakAddress);
+      if (attempt === connectionAttempt.current) setOakInfo(info);
+    } catch (error) {
+      if (attempt === connectionAttempt.current) setPreviewError(error instanceof Error ? error.message : "Unable to connect to OAK.");
+    } finally {
+      if (attempt === connectionAttempt.current) setConnecting(false);
+    }
+  };
+
+  useEffect(() => {
+    let mounted = true;
 
     async function preparePreview() {
+      setPreviewError(null);
+      setPreviewReady(false);
+      if (!settingsReady || cameraType === "oak-d") return;
       if (!hasNativeDepthCamera()) {
         setPreviewReady(true);
         return;
@@ -69,7 +127,7 @@ export default function CaptureImageScreen() {
         clearTimeout(featuredTimer.current);
       }
     };
-  }, []);
+  }, [cameraType, settingsReady]);
 
   if (!collectionData) return <ThemedText>No metadata available. Please go back.</ThemedText>;
 
@@ -84,10 +142,16 @@ export default function CaptureImageScreen() {
   };
 
   const handleCapture = async () => {
+    if (capturedImages.length >= 500) {
+      Alert.alert("Batch full", "Save this batch before capturing more images.");
+      return;
+    }
     try {
       setCapturing(true);
       const nativeCamera = hasNativeDepthCamera();
-      const result = nativeCamera
+      const result = cameraType === "oak-d"
+        ? await captureOakCamera(oakAddress, collectionData.name)
+        : nativeCamera
         ? await captureNativeDepthCamera(collectionData.name)
         : await captureViaBackend(collectionData.name);
 
@@ -101,6 +165,7 @@ export default function CaptureImageScreen() {
         source: "depth-camera",
         metadata: {
           ...(result.metadata ?? {}),
+          cameraType,
           depthRawUrl: result.depthRawUrl,
           depthPreviewUrl: result.depthPreviewUrl,
         },
@@ -189,17 +254,38 @@ export default function CaptureImageScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <ThemedView style={styles.titleContainer}>
-        <View>
-          <ThemedText style={styles.eyebrow}>Depth Camera App</ThemedText>
           <ThemedText type="title" style={styles.title}>Step 2: Take Photos</ThemedText>
-        </View>
-        <View style={styles.batchPill}>
-          <Ionicons name="folder-open" size={15} color="#D9F99D" />
-          <ThemedText style={styles.batchPillText}>{collectionData.name}</ThemedText>
-        </View>
       </ThemedView>
 
-      <View style={styles.container}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+        <View style={styles.cameraSettings}>
+          <ThemedText style={styles.cameraLabel}>Camera</ThemedText>
+          <View style={styles.actionsRow}>
+            {(["realsense", "oak-d"] as const).map((type) => (
+              <TouchableOpacity key={type} disabled={capturing || saving || !settingsReady}
+                accessibilityRole="radio" accessibilityState={{ checked: cameraType === type }}
+                style={[styles.cameraOption, cameraType === type && styles.cameraSelected]}
+                onPress={() => {
+                  connectionAttempt.current += 1;
+                  setConnecting(false); setOakInfo(null); setFeaturedImageUri(null); setPreviewError(null); setCameraType(type);
+                }}>
+                <ThemedText style={styles.cameraOptionText}>{type === "realsense" ? "RealSense D435i" : "OAK-D PoE"}</ThemedText>
+              </TouchableOpacity>
+            ))}
+          </View>
+          {cameraType === "oak-d" && <>
+            <ThemedText style={styles.cameraHelp}>Camera network address</ThemedText>
+            <View style={styles.actionsRow}>
+              <TextInput accessibilityLabel="OAK camera network address" value={oakAddress} editable={!capturing && !connecting}
+                autoCapitalize="none" autoCorrect={false} keyboardType="url" style={styles.addressInput}
+                onChangeText={(value) => { connectionAttempt.current += 1; setOakAddress(value); setOakInfo(null); setPreviewError(null); }} />
+              <TouchableOpacity style={styles.cameraOption} onPress={connectOak} disabled={connecting || capturing}>
+                <ThemedText style={styles.cameraOptionText}>{connecting ? "Connecting…" : "Connect"}</ThemedText>
+              </TouchableOpacity>
+            </View>
+            <ThemedText style={styles.cameraHelp}>{oakInfo ? `${oakInfo.sensor} · ${oakInfo.colorWidth} × ${oakInfo.colorHeight}` : "Requires the OAK app pipeline and a reachable PoE network."}</ThemedText>
+          </>}
+        </View>
         <View style={styles.previewPanel}>
           <View style={styles.previewTopBar}>
             <View style={styles.segmentedControl}>
@@ -219,23 +305,26 @@ export default function CaptureImageScreen() {
               </TouchableOpacity>
             </View>
             <View style={styles.liveStatus}>
-              <View style={styles.liveDot} />
-              <ThemedText style={styles.liveStatusText}>{featuredImageUri ? "Captured" : "Live"}</ThemedText>
+              <View style={[styles.liveDot, (previewError || (cameraType === "oak-d" && !oakInfo)) ? { backgroundColor: "#F59E0B" } : undefined]} />
+              <ThemedText style={styles.liveStatusText}>{featuredImageUri ? "Captured" : cameraType === "oak-d" ? oakInfo && !previewError ? "Preview" : "Disconnected" : previewReady ? "Live" : "Preparing"}</ThemedText>
             </View>
           </View>
 
           {featuredImageUri ? (
             <Image source={{ uri: featuredImageUri }} style={styles.previewImage} resizeMode="cover" />
-          ) : hasNativeDepthCamera() && previewReady ? (
+          ) : cameraType === "oak-d" && oakInfo && !capturing && isFocused ? (
+            <OakCameraPreview address={oakAddress} mode={previewMode} style={styles.previewImage} onError={oakPreviewError} onReady={oakPreviewReady} />
+          ) : cameraType === "realsense" && hasNativeDepthCamera() && previewReady && isFocused ? (
             <DepthCameraPreview mode={previewMode} style={styles.previewImage} />
           ) : (
             <View style={styles.previewPlaceholder}>
               <MaterialIcons name="linked-camera" size={52} color="#fff" />
               <ThemedText style={styles.previewPlaceholderText}>
-                {previewError ?? "Preparing live RealSense view"}
+                {previewError ?? (cameraType === "oak-d" ? capturing ? "Capturing from OAK…" : "Connect your OAK-D PoE camera above" : "Preparing live RealSense view")}
               </ThemedText>
             </View>
           )}
+          {cameraType === "oak-d" && oakInfo && previewError && <ThemedText style={styles.previewError}>{previewError}</ThemedText>}
           <View style={styles.previewBadge}>
             <ThemedText style={styles.previewBadgeText}>
               {featuredImageUri ? "Captured Preview" : previewMode === "depth" ? "Depth Stream" : "RGB Stream"}
@@ -246,7 +335,7 @@ export default function CaptureImageScreen() {
         <TouchableOpacity
           style={[styles.captureButton, capturing && styles.disabledButton]}
           onPress={handleCapture}
-          disabled={capturing}
+          disabled={capturing || !settingsReady || (cameraType === "oak-d" && (!oakInfo || connecting))}
         >
           {capturing ? (
             <ActivityIndicator color="#fff" />
@@ -314,7 +403,7 @@ export default function CaptureImageScreen() {
             )}
           </ScrollView>
         </View>
-      </View>
+      </ScrollView>
 
       <ImageModal uri={selectedImageUri} onClose={() => setSelectedImageUri(null)} />
       <ReviewModal
@@ -357,7 +446,7 @@ function ReviewModal({
         <View style={styles.reviewHeader}>
           <ThemedText style={styles.reviewTitle}>Preview All Images</ThemedText>
           <TouchableOpacity onPress={onClose}>
-            <Ionicons name="close" size={28} color="#111" />
+            <Ionicons name="close" size={28} color="#ECEEF0" />
           </TouchableOpacity>
         </View>
         <ScrollView contentContainerStyle={styles.reviewGrid}>
@@ -378,17 +467,25 @@ function ReviewModal({
 }
 
 const styles = StyleSheet.create({
+  cameraSettings: { gap: 8 },
+  cameraLabel: { color: "#ECEEF0", fontWeight: "700" },
+  cameraHelp: { color: "#A6ADB2", fontSize: 12 },
+  cameraOption: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: "#465057", backgroundColor: "#fff" },
+  cameraSelected: { backgroundColor: "#4CAF50", borderColor: "#4CAF50" },
+  cameraOptionText: { color: "#222222", fontSize: 13, fontWeight: "700" },
+  addressInput: { flex: 1, minWidth: 0, borderWidth: 1, borderColor: "#465057", borderRadius: 8, paddingHorizontal: 8, color: "#222222", backgroundColor: "#fff" },
+  previewError: { position: "absolute", top: 65, left: 12, right: 12, color: "#FECACA", backgroundColor: "#08111F", padding: 8, fontSize: 12 },
   safeArea: {
     flex: 1,
-    backgroundColor: "#EEF4F0",
+    backgroundColor: "#151718",
   },
   titleContainer: {
-    minHeight: 88,
+    minHeight: 48,
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: "#102A2D",
+    backgroundColor: "#1D3D47",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "center",
     flexDirection: "row",
     borderBottomWidth: 1,
     borderBottomColor: "#1F4546",
@@ -402,8 +499,8 @@ const styles = StyleSheet.create({
   },
   title: {
     color: "#F8FAFC",
-    fontSize: 23,
-    fontWeight: "800",
+    fontSize: 20,
+    fontWeight: "600",
     marginTop: 2,
   },
   batchPill: {
@@ -420,24 +517,24 @@ const styles = StyleSheet.create({
     borderColor: "rgba(217,249,157,0.28)",
   },
   batchPillText: {
-    color: "#ECFCCB",
+    color: "#ECEEF0",
     fontSize: 12,
     fontWeight: "800",
   },
   container: {
-    flex: 1,
+    flexGrow: 1,
     padding: 12,
     gap: 12,
-    backgroundColor: "#EEF4F0",
+    backgroundColor: "#151718",
   },
   previewPanel: {
-    flex: 1,
+    height: 360,
     minHeight: 330,
     borderRadius: 8,
     overflow: "hidden",
     backgroundColor: "#08111F",
     borderWidth: 1,
-    borderColor: "#BFD7CB",
+    borderColor: "#465057",
     elevation: 6,
     shadowColor: "#0F172A",
     shadowOpacity: 0.16,
@@ -478,7 +575,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   segmentButtonActive: {
-    backgroundColor: "#D9F99D",
+    backgroundColor: "#4CAF50",
   },
   segmentText: {
     color: "#D8E2EA",
@@ -545,10 +642,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     flexDirection: "row",
     gap: 10,
-    backgroundColor: "#0E7C66",
+    backgroundColor: "#4CAF50",
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: "#0B5F4E",
+    borderColor: "#4CAF50",
     elevation: 3,
   },
   disabledButton: {
@@ -580,7 +677,7 @@ const styles = StyleSheet.create({
   },
   saveButton: {
     minWidth: 104,
-    backgroundColor: "#1B8A5A",
+    backgroundColor: "#4CAF50",
     borderRadius: 8,
     minHeight: 50,
     alignItems: "center",
@@ -596,9 +693,9 @@ const styles = StyleSheet.create({
     minHeight: 132,
     padding: 12,
     borderRadius: 8,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#151718",
     borderWidth: 1,
-    borderColor: "#D7E5DE",
+    borderColor: "#333B40",
   },
   thumbnailHeader: {
     flexDirection: "row",
@@ -609,11 +706,11 @@ const styles = StyleSheet.create({
   heading: {
     fontWeight: "bold",
     fontSize: 16,
-    color: "#102A2D",
+    color: "#ECEEF0",
   },
   subheading: {
     marginTop: 2,
-    color: "#5F746B",
+    color: "#A6ADB2",
     fontSize: 12,
   },
   thumbnailStrip: {
@@ -691,7 +788,7 @@ const styles = StyleSheet.create({
   },
   reviewContainer: {
     flex: 1,
-    backgroundColor: "#F7FAFC",
+    backgroundColor: "#151718",
   },
   reviewHeader: {
     minHeight: 56,

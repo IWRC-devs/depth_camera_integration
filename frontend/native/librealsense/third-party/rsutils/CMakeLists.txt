@@ -17,6 +17,7 @@ target_include_directories( ${PROJECT_NAME}
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/third-party/json/include>
+        $<BUILD_INTERFACE:${REPO_ROOT}/third-party/json/include>
 )
 
 # Headers -----------------------------------------------------------------------------------
@@ -48,7 +49,7 @@ file(GLOB_RECURSE UTILITIES_SOURCE_FILES
 )
 if( BUILD_EASYLOGGINGPP )
     target_sources( ${PROJECT_NAME}
-        PRIVATE "${REPO_ROOT}/third-party/easyloggingpp/src/easylogging++.cc" )
+        PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/easyloggingpp.cpp" )
     # We want to disable any default ELPP log-file!
     target_compile_definitions( ${PROJECT_NAME}
         PUBLIC ELPP_NO_DEFAULT_LOG_FILE )

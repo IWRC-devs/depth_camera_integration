@@ -2,7 +2,7 @@ import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { useRouter } from "expo-router";
 import { useState, useEffect } from "react";
-import { ActivityIndicator, ScrollView, useColorScheme, View, StyleSheet, TouchableOpacity, TextInput } from "react-native";
+import { ActivityIndicator, ScrollView, View, StyleSheet, TouchableOpacity, TextInput } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { createNewCollection, useCollection } from "@/context/CollectionContext";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -10,8 +10,7 @@ import { getLightingFromFile } from "@/data/lighting";
 import { getPlantNames, savePlantName, PlantNameOption } from "@/utils/plantNameStore";
 
 export default function ParametersScreen() {
-  const colorScheme = useColorScheme();
-  const backgroundColor = colorScheme === "dark" ? "#1D3D47" : "#A1CEDC";
+  const backgroundColor = "#1D3D47";
   const router = useRouter();
   const { collectionData, setCollectionData } = useCollection();
 
@@ -134,7 +133,7 @@ export default function ParametersScreen() {
   }
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: "#151718" }}>
       <ThemedView style={[styles.titleContainer, { backgroundColor }]}>
         <ThemedText type="title" style={styles.title}>
           Step 1: Parameters
@@ -227,7 +226,7 @@ export default function ParametersScreen() {
               style={styles.continueButton}
               onPress={() => onContinue()}
             >
-              <ThemedText style={styles.continueButtonText}>Continue to Take Photos</ThemedText>
+              <ThemedText style={styles.continueButtonText}>Continue</ThemedText>
             </TouchableOpacity>
           </SafeAreaView>
         )}
@@ -255,7 +254,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between", // pushes icon to the right
   },
-  selectedItem: { backgroundColor: "#607D8B" }, // red variant
+  selectedItem: { backgroundColor: "#4CAF50" },
   itemText: { fontSize: 18, color: "#333" },
   selectedText: { color: "#fff", fontWeight: "bold" },
   continueButton: {

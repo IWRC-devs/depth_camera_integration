@@ -2,9 +2,11 @@ package com.depthcamera.app
 
 import android.content.ContentValues
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Base64
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -38,6 +40,67 @@ class DepthCameraModule(
   private var previewThread: Thread? = null
 
   override fun getName(): String = "DepthCamera"
+
+  private fun decodeOakDepth(encoded: String, width: Int, height: Int): ByteArray {
+    require(width in 1..1280 && height in 1..800) { "Invalid OAK depth dimensions." }
+    require(encoded.length <= 3000000) { "OAK depth buffer is too large." }
+    val bytes = Base64.decode(encoded, Base64.DEFAULT)
+    require(bytes.size == width * height * 2) { "Invalid OAK Z16 depth buffer." }
+    return bytes
+  }
+
+  @ReactMethod
+  fun oakDepthPreview(encoded: String, width: Int, height: Int, promise: Promise) {
+    Thread {
+      try {
+        val bytes = depthPreviewBytes(decodeOakDepth(encoded, width, height), width, height)
+        promise.resolve("data:image/png;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP))
+      } catch (error: Throwable) {
+        promise.reject("OAK_PREVIEW_FAILED", error.message, error)
+      }
+    }.start()
+  }
+
+  @ReactMethod
+  fun saveOakCapture(collectionName: String, jpeg: String, encodedDepth: String, width: Int, height: Int, promise: Promise) {
+    Thread {
+      try {
+        val depth = decodeOakDepth(encodedDepth, width, height)
+        require(jpeg.length <= 24000000) { "OAK JPEG is too large." }
+        val color = Base64.decode(jpeg, Base64.DEFAULT)
+        require(color.size >= 4 && color[0] == 0xff.toByte() && color[1] == 0xd8.toByte()) { "Invalid OAK JPEG." }
+        val dimensions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(color, 0, color.size, dimensions)
+        require(dimensions.outWidth in 1..4096 && dimensions.outHeight in 1..3040) { "Invalid OAK JPEG dimensions." }
+        val safeCollection = safeName(collectionName)
+        val stamp = "${System.currentTimeMillis()}-${java.util.UUID.randomUUID()}"
+        val colorFile = savePublicBytes(safeCollection, "oak-color-$stamp.jpg", "image/jpeg", color)
+        val depthFile = savePublicBytes(safeCollection, "oak-depth-$stamp-z16.raw", "application/octet-stream", depth)
+        val previewFile = savePublicBytes(safeCollection, "oak-depth-$stamp-preview.png", "image/png", depthPreviewBytes(depth, width, height))
+        promise.resolve(WritableNativeMap().apply {
+          putBoolean("success", true)
+          putString("imageUrl", colorFile.uri)
+          putString("depthRawUrl", depthFile.uri)
+          putString("depthPreviewUrl", previewFile.uri)
+          putMap("metadata", WritableNativeMap().apply {
+            putString("source", "android-oak-poe")
+            putInt("colorWidth", dimensions.outWidth)
+            putInt("colorHeight", dimensions.outHeight)
+            putString("colorPath", colorFile.displayPath)
+            putString("depthRawPath", depthFile.displayPath)
+            putString("depthPreviewPath", previewFile.displayPath)
+            putString("depthFormat", "Z16-LE")
+            putDouble("depthUnits", 0.001)
+            putInt("depthWidth", width)
+            putInt("depthHeight", height)
+            putString("saveFolder", "Documents/depth_camera_images/$safeCollection")
+          })
+        })
+      } catch (error: Throwable) {
+        promise.reject("OAK_SAVE_FAILED", error.message, error)
+      }
+    }.start()
+  }
 
   @ReactMethod
   fun capture(collectionName: String?, promise: Promise) {

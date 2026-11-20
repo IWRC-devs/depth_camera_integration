@@ -5,6 +5,7 @@ if(NOT TARGET yaml_cpp)
     ExternalProject_Add(yaml_cpp
         GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
         GIT_TAG yaml-cpp-0.7.0
+        GIT_CONFIG core.longpaths=true
         UPDATE_COMMAND ""
         CONFIGURE_COMMAND ""
         BUILD_COMMAND ""

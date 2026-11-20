@@ -30,6 +30,7 @@ android {
     externalNativeBuild {
         cmake {
             path "CMakeLists.txt"
+            buildStagingDirectory new File(rootProject.projectDir, ".cxx-lrs/librealsense")
         }
     }
 }
