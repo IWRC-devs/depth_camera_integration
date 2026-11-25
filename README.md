@@ -18,7 +18,7 @@ Depth Camera App is an Expo frontend and Node/Express backend for collecting ima
    - growth stage
    - soil color
    - lighting
-2. User takes photos with the Intel depth camera.
+2. User takes photos with the RealSense depth camera.
 3. App uploads immediately when online, or saves the batch locally and syncs later.
 4. Backend stores images in Cloudinary when Cloudinary env vars exist. In local development, it falls back to `backend/uploads/`.
 5. Backend stores collection metadata and image URLs in local JSON files.
@@ -48,9 +48,9 @@ CLOUDINARY_API_SECRET=
 
 By default, metadata JSON files are written to `backend/data/collections/`.
 
-## Intel Depth Camera Capture
+## RealSense Camera Capture
 
-The `/api/depth-camera/capture` endpoint runs `backend/scripts/capture_depth_camera.py` on the backend host. That host must have the Intel RealSense SDK/librealsense installed, a supported Intel depth camera connected, and Python packages from `backend/requirements-depth-camera.txt`.
+The `/api/depth-camera/capture` endpoint runs `backend/scripts/capture_depth_camera.py` on the backend host. That host must have the RealSense SDK/librealsense installed, a supported RealSense depth camera connected, and Python packages from `backend/requirements-depth-camera.txt`.
 
 ```bash
 cd backend
